@@ -1,0 +1,30 @@
+name: Build Calibre-XSH
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: 执行构建脚本
+        run: python build.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibre-xsh
+          path: out/Calibre-XSH.zip
+          if-no-files-found: error
