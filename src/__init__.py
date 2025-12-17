@@ -318,7 +318,11 @@ class CalibreXsh(Source):
             if record:
                 self._emit_metadata(record, result_queue, log, abort)
                 return
-        queries = self._build_queries(title, authors, identifiers)
+        inline_title, inline_authors, inline_found = self._extract_inline_title_and_authors(title)
+        if inline_found:
+            title = inline_title
+            authors = inline_authors
+        queries = self._build_queries(title, authors, identifiers, force_author=inline_found)
         if not queries:
             log.info('Calibre-XSH: 缺少可用于搜索的关键词。')
             return
@@ -349,6 +353,19 @@ class CalibreXsh(Source):
             if abort.is_set():
                 break
             normalized = self._normalize_record(record)
+            book_id = normalized.get('book_id') or normalized.get('id')
+            if book_id:
+                detail = self._load_by_id(book_id, log, fields='cover,introduction,all')
+                if detail:
+                    detail = self._normalize_record(detail)
+                    # 覆盖/补全封面、简介、标签、分类及状态、评分等富字段
+                    for key in (
+                        'cover_url', 'introduction', 'categories', 'tags', 'source_site',
+                        'status', 'word_count', 'chapter_count', 'average_rating', 'rating_count',
+                        'publisher', 'official_url', 'created_at', 'updated_at'
+                    ):
+                        if detail.get(key) not in (None, ''):
+                            normalized[key] = detail[key]
             self._emit_metadata(normalized, result_queue, log, abort)
 
     def is_customizable(self):
@@ -583,7 +600,21 @@ class CalibreXsh(Source):
             log.error(f'Calibre-XSH: 根据ID获取书籍失败({book_id}): {err}')
             return None
 
-    def _build_queries(self, title, authors, identifiers):
+    def _extract_inline_title_and_authors(self, title):
+        if not title:
+            return title, None, False
+        parts = re.split(r'\s*----\s*', title, maxsplit=1)
+        if len(parts) != 2:
+            return title, None, False
+        inline_title, inline_authors = parts[0].strip(), parts[1].strip()
+        if not inline_title or not inline_authors:
+            return title, None, False
+        authors = [item for item in re.split(r'[、，,/;&\s]+', inline_authors) if item]
+        if not authors:
+            authors = [inline_authors]
+        return inline_title, authors, True
+
+    def _build_queries(self, title, authors, identifiers, force_author=False):
         keyword = (identifiers or {}).get('isbn')
         if keyword:
             keyword = keyword.strip()
@@ -599,7 +630,8 @@ class CalibreXsh(Source):
             return []
         queries = []
         author_terms = self._filter_authors(authors)
-        if self.search_with_author and author_terms:
+        include_author = force_author or self.search_with_author
+        if include_author and author_terms:
             queries.append(f"{keyword} {' '.join(author_terms)}")
         queries.append(keyword)
         normalized = []
@@ -739,6 +771,7 @@ class CalibreXsh(Source):
         if not title:
             return ''
         text = title.strip()
+        text = re.split(r'\s*----\s*', text, maxsplit=1)[0]
         text = re.sub(r'作者[:：].*$', '', text)
         text = text.replace('《', ' ').replace('》', ' ')
         text = re.sub(r'（[^）]*）', ' ', text)
